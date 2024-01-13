@@ -1,13 +1,13 @@
 # Занятие 1. Vagrant-стенд для обновления ядра и создания образа системы
-Цель домашнего задания
-Научиться обновлять ядро в ОС Linux. Получение навыков работы с Vagrant, Packer и публикацией готовых образов в Vagrant Cloud. 
-Описание домашнего задания
-1) Обновить ядро ОС из репозитория ELRepo
-2) Создать Vagrant box c помощью Packer
+#### Цель домашнего задания
+>Научиться обновлять ядро в ОС Linux. Получение навыков работы с Vagrant, Packer и публикацией готовых образов в Vagrant Cloud. 
+>Описание домашнего задания
+>1) Обновить ядро ОС из репозитория ELRepo
+>2) Создать Vagrant box c помощью Packer
 	
 	
-	Запуск вм после создания вагрант-файла:
-
+#### Запуск вм после создания вагрант-файла:
+```
 bunny@bun:~/study/vagrant_kernel_update$ vagrant up
 Bringing machine 'kernel-update' up with 'virtualbox' provider...
 ==> kernel-update: Box 'generic/centos8s' could not be found. Attempting to find and install...
@@ -21,8 +21,12 @@ Bringing machine 'kernel-update' up with 'virtualbox' provider...
 ==> kernel-update: Successfully added box 'generic/centos8s' (v4.3.4) for 'virtualbox (amd64)'!
 ==> kernel-update: Importing base box 'generic/centos8s'...
 ...
-	Обновление ядра: 
 
+```
+	
+#### Обновление ядра: 
+
+```
 bunny@bun:~/study/vagrant_kernel_update$ vagrant ssh
 [vagrant@kernel-update ~]$ uname -r
 4.18.0-516.el8.x86_64
@@ -38,8 +42,10 @@ Complete!
 [vagrant@kernel-update ~]$ sudo grub2-mkconfig -o /boot/grub2/grub.cfg
 Generating grub configuration file ...
 done
+```
 
-	Выбрать загрузку нового ядра по-умолчанию:
+#### Выбрать загрузку нового ядра по-умолчанию:
+```
 [vagrant@kernel-update ~]$ sudo grub2-set-default 0
 [vagrant@kernel-update ~]$ sudo reboot
 Connection to 127.0.0.1 closed by remote host.
@@ -49,18 +55,17 @@ bunny@bun:~/study/vagrant_kernel_update$ vagrant ssh
 Last login: Tue Jan  9 16:13:02 2024 from 10.0.2.2
 [vagrant@kernel-update ~]$ uname -r
 6.6.10-1.el8.elrepo.x86_64
+```
 
----///---
-
-	Создание образа системы
+## Создание образа системы
 	
-Для создания образа системы, нам потребуется программа Packer
-Давайте кратко разберем, как Packer будет создавать образ нашей виртуальной машины:
-Сначала скачивается ISO-образ и сверяется его контрольная сумма, если контрольная сумма не совпадает, процесс создания образа завершается с ошибкой
-Далее идёт процесс установки ОС, его также можно представить в виде файла и Packer сам развернёт нам виртуальную машину, опираясь на инструкцию из этого файла
-После развертывания ВМ мы запустим скрипты настройки
-После выполнения всех вышеуказанных действий packer снимает образ
-
+>Для создания образа системы, нам потребуется программа Packer <br>
+Давайте кратко разберем, как Packer будет создавать образ нашей виртуальной машины: <br>
+Сначала скачивается ISO-образ и сверяется его контрольная сумма, если контрольная сумма не совпадает, процесс создания образа завершается с ошибкой <br>
+Далее идёт процесс установки ОС, его также можно представить в виде файла и Packer сам развернёт нам виртуальную машину, опираясь на инструкцию из этого файла <br>
+После развертывания ВМ мы запустим скрипты настройки <br>
+После выполнения всех вышеуказанных действий packer снимает образ <br>
+```
 bunny@bun:~/study/vagrant_kernel_update/packer$ packer build centos.json
 virtualbox-iso.centos-8stream: output will be in this color.
 
@@ -83,21 +88,21 @@ Build 'virtualbox-iso.centos-8stream' finished after 31 minutes 11 seconds.
 
 ==> Builds finished. The artifacts of successful builds are:
 --> virtualbox-iso.centos-8stream: 'virtualbox' provider box: centos-8-kernel-6-x86_64-Minimal.box
-
-	После создания образа, его рекомендуется проверить. Для проверки  импортируем полученный vagrant box в Vagrant: 
-	
+```
+#### После создания образа, его рекомендуется проверить. Для проверки  импортируем полученный vagrant box в Vagrant: 
+```	
 bunny@bun:~/study/vagrant_kernel_update/packer$ vagrant box add --name centos8-kernel6 centos-8-kernel-6-x86_64-Minimal.box
 ==> box: Box file was not detected as metadata. Adding it directly...
 ==> box: Adding box 'centos8-kernel6' (v0) for provider: 
     box: Unpacking necessary files from: file:///home/bunny/study/vagrant_kernel_update/packer/centos-8-kernel-6-x86_64-Minimal.box
-
-	Проверим, что образ теперь есть в списке имеющихся образов vagrant:
-	
+```
+#### Проверим, что образ теперь есть в списке имеющихся образов vagrant:
+```	
 bunny@bun:~/study/vagrant_kernel_update/packer$ vagrant box list
 centos8-kernel6 (virtualbox, 0)
-
-	Запускаем:
-	
+```
+#### Запускаем:
+```	
 bunny@bun:~/study/vagrant_kernel_update/packer$ vagrant up
 Bringing machine 'default' up with 'virtualbox' provider...
 ==> default: Importing base box 'centos8-kernel6'...
@@ -128,4 +133,4 @@ Activate the web console with: systemctl enable --now cockpit.socket
 Last login: Wed Jan 10 13:14:43 2024 from 10.0.2.2
 [vagrant@otus-c8 ~]$ uname -r
 6.6.10-1.el8.elrepo.x86_64
-
+```
