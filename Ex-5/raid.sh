@@ -1,7 +1,7 @@
 #!/bin/bash
 
 #kakie diski?
-av_disks=($(lsblk -o NAME -n -d | grep -E "sd[a-z]$"))
+av_disks=($(lsblk -o NAME -n -d | grep -E "sd[b-z]$"))
 
 #skolko diskov?
 devices=${#av_disks[@]}
@@ -30,5 +30,5 @@ done
 
 echo "$disks"
 
-echo mdadm --create --verbose /dev/md0 -l $raid_number -n $devices /dev/{$disks}
+mdadm --create --verbose /dev/md0 -l $raid_number -n $devices /dev/{$disks}
 
