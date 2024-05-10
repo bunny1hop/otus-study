@@ -19,16 +19,23 @@ done
 read -p "raid number?" raid_number
 
 #sozdaem raid
-for el in "${av_disks[@]}"
-do
-    if [ -z "$disks" ]; then
-        disks="$el"
-    else
-        disks="$disks,$el"
-    fi
-done
+#for el in "${av_disks[@]}"
+#do
+#    if [ -z "$disks" ]; then
+#        disks="$el"
+#    else
+#        disks="$disks,$el"
+#    fi
+#done
+#
+#echo "$disks"
 
-echo "$disks"
+mdadm --create --verbose /dev/md0 -l $raid_number -n $devices /dev/sd{b,c,d,e,f}
 
-mdadm --create --verbose /dev/md0 -l $raid_number -n $devices /dev/{$disks}
+cat /proc/mdstat
+mdadm -D /dev/md0
 
+mkdir /etc/mdadm/
+
+echo "DEVICE partitions" > /etc/mdadm/mdadm.conf
+mdadm --detail --scan --verbose | awk '/ARRAY/ {print}' >> /etc/mdadm/mdadm.conf
