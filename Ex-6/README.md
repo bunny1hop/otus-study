@@ -1,4 +1,4 @@
-##Уменьшить том под / до 8G
+## Уменьшить том под / до 8G
 ```
 [root@lvm ~]# xfsdump
 bash: xfsdump: command not found
@@ -390,7 +390,7 @@ Skipping udev rule: 91-permissions.rules
 *** Creating image file done ***
 *** Creating initramfs image file '/boot/initramfs-3.10.0-862.2.3.el7.x86_64.img' done ***
 ```
-##Выделить том под /var в зеркало
+## Выделить том под /var в зеркало
 ```
 [root@lvm boot]# pvcreate /dev/sdc /dev/sdd
   Physical volume "/dev/sdc" successfully created.
@@ -487,7 +487,7 @@ sdd                        8:48   0    1G  0 disk
   └─vg_var-lv_var        253:6    0  952M  0 lvm  /var
 sde                        8:64   0    1G  0 disk 
 ```
-##Выделить том под /home
+## Выделить том под /home
 ```
 [root@lvm ~]# lvcreate -n LogVol_Home -L 2G /dev/VolGroup00
   Logical volume "LogVol_Home" created.
@@ -552,7 +552,7 @@ sdd                          8:48   0    1G  0 disk
 sde                          8:64   0    1G  0 disk 
 ```
 
-##Работа со снапшотами
+## Работа со снапшотами
 ```
 [root@lvm ~]#  touch /home/file{1..20}
 [root@lvm ~]#  lvcreate -L 100MB -s -n home_snap \
