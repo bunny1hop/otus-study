@@ -1,0 +1,43 @@
+---
+- name: nfss | Конфиг сервера
+  hosts: nfss
+  become: true
+
+  tasks:
+    - name: nfss | install nfs-server
+      apt:
+        name: nfs-kernel-server
+        state: latest
+                    
+    - name: сreate directory | create uload dir
+      file:
+        path=/srv/share/upload
+        mode=0777
+        owner=nobody
+        group=nogroup
+        state=directory
+   
+    - name: Cоздаём в файле /etc/exports структуру, которая позволит экспортировать ранее созданную директорию
+      lineinfile: dest=/etc/exports line="/srv/share 192.168.50.11/32(rw,sync,root_squash)"
+
+    - name: Экспортируем директорию
+      command: exportfs -r  
+
+- name: nfsc | Конфиг клиента
+  hosts: nfsc
+  become: true
+
+  tasks:
+    - name: nfsc | install nfs-common
+      apt:
+        name: nfs-common
+        state: latest
+    
+    - name: Добавляем в /etc/fstab строку
+      lineinfile: dest=/etc/fstab line="192.168.50.10:/srv/share/ /mnt nfs vers=3,noauto,x-systemd.automount 0 0"
+
+    - name: daemon-reload
+      command: systemctl daemon-reload
+
+    - name: restart remote-fs.target
+      command: systemctl restart remote-fs.target
