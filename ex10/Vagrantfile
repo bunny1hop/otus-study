@@ -1,0 +1,10 @@
+Vagrant.configure("2") do |config|
+  config.vm.box = "25688eb4-e4f4-44ec-a2ad-522368d6d9f2"
+# Образ - https://app.vagrantup.com/almalinux/boxes/9/versions/9.3.20231118/providers/virtualbox/amd64/vagrant.box
+  config.vm.network "forwarded_port", guest: 80, host: 8080
+  config.vm.network "private_network", ip: "192.168.63.253"
+  config.vm.provision "file", source: "/home/bunny/Otus/ex10/xnginx.spec", destination: "$HOME/xnginx.spec"
+  config.vm.provision "file", source: "/home/bunny/Otus/ex10/nginx.conf", destination: "$HOME/nginx.conf"
+  config.vm.provision "shell", path: "script.sh"
+  config.vm.provision "shell", path: "script2.sh"
+end
