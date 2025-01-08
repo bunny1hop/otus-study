@@ -1,0 +1,1006 @@
+- name: Update apt package
+  hosts: all
+  become: yes
+  tags: apt
+  tasks:
+    - name: Update apt package cache
+      apt:
+        update_cache: yes
+      ignore_errors: true
+ 
+    - name: touch rsync.conf
+      tags: touch
+      file:
+        path: /etc/rsyncd.conf
+        state: touch  
+
+    - name: Enable rsync
+      systemd:
+        name: rsync.service
+        enabled: yes
+
+    - name: Start rsync
+      systemd:
+        name: rsync.service
+        state: started    
+        
+    - name: Copying the ssh root keys in /root/.ssh/authorized_keys
+      copy:
+        src: files/authorized_keys
+        dest: /root/.ssh/
+        mode: 0600
+        owner: root
+        group: root
+        
+    - name: Copying private key file in /root/.ssh/id_rsa
+      copy:
+        src: files/id_rsa
+        dest: /root/.ssh/
+        mode: 0400
+        
+    - name: Restart ssh
+      systemd:
+        name: ssh.service
+        state: restarted  
+    
+#  tasks:
+#    - name: Update apt package cache
+#      command: apt-get update -y
+#      register: update_result
+#      changed_when: "'Reading package lists' in update_result.stdout"
+
+#    - name: Upgrade all packages
+#      command: apt-get dist-upgrade -y
+#      register: upgrade_result
+#      changed_when: "'upgraded,' in upgrade_result.stdout or 'newly installed,' in upgrade_result.stdout or 'to remove' in upgrade_result.stdout"
+
+#    - name: Install common packages
+#      command: apt-get install -y curl vim git
+#      register: install_result
+#      changed_when: "'Setting up' in install_result.stdout"
+
+- name: Manage SELinux
+  hosts: all
+  become: yes
+  tasks:
+    - name: Check if SELinux is installed
+      stat:
+        path: /usr/sbin/getenforce
+      register: selinux_check
+
+    - name: Check SELinux status
+      command: getenforce
+      register: selinux_status
+      when: selinux_check.stat.exists
+
+    - name: Disable SELinux temporarily
+      command: setenforce 0
+      when: selinux_check.stat.exists and selinux_status.stdout != "Disabled"
+
+    - name: Disable SELinux permanently
+      lineinfile:
+        path: /etc/selinux/config
+        regexp: '^SELINUX='
+        line: 'SELINUX=disabled'
+        state: present
+      when: selinux_check.stat.exists
+
+    - name: Reboot if SELinux was active
+      command: reboot
+      when: selinux_check.stat.exists and selinux_status.stdout != "Disabled"
+
+- name: Install iptables-persistent
+  hosts: web
+  become: yes
+  tags: network
+  tasks:
+    - name: Install iptables-persistent package
+      command: apt-get install -y iptables-persistent
+      environment:
+        DEBIAN_FRONTEND: noninteractive
+      register: persistent_install_result
+      changed_when: persistent_install_result.rc == 0
+      failed_when: persistent_install_result.rc != 0
+
+- name: Enable IP forwarding on web-server
+  hosts: web
+  become: yes
+  tags: network
+  tasks:
+    - name: Ensure IP forwarding is enabled
+      sysctl:
+        name: net.ipv4.ip_forward
+        value: "1"
+        state: present
+        sysctl_set: yes
+        reload: yes
+
+    - name: Configure NAT on web-server
+      iptables:
+        chain: POSTROUTING
+        table: nat
+        jump: MASQUERADE
+        source: "192.168.56.0/24"
+        
+    - name: Ensure iptables directory exists
+      file:
+        path: /etc/iptables
+        state: directory
+        owner: root
+        group: root
+        mode: '0755'
+
+    - name: Save iptables rules
+      shell: iptables-save > /etc/iptables/rules.v4
+      args:
+        executable: /bin/bash
+      notify:
+        - Restart iptables
+  
+  handlers:
+    - name: Restart iptables
+      service:
+        name: netfilter-persistent
+        state: restarted 
+        
+- name: Set default gateway to web-server
+  hosts: all:!web
+  become: yes
+  tags: network
+  tasks:
+    - name: Update Netplan configuration for default gateway
+      block:
+        - name: Read existing Netplan configuration
+          slurp:
+            src: /etc/netplan/01-netcfg.yaml
+          register: netplan_config
+
+        - name: Backup existing Netplan configuration
+          copy:
+            content: "{{ netplan_config.content | b64decode }}"
+            dest: "/etc/netplan/01-netcfg.yaml.bak"
+
+        - name: Add default gateway to Netplan
+          lineinfile:
+            path: /etc/netplan/01-netcfg.yaml
+            line: "      gateway4: 192.168.56.10"
+            insertafter: "addresses:"
+
+        - name: Apply Netplan configuration
+          command: netplan apply 
+          
+        - name: Add default route via 192.168.56.10
+          command: ip route add default via 192.168.56.10 dev eth1
+          register: add_route_result
+          ignore_errors: true
+          changed_when: add_route_result.rc == 0
+
+        - name: Remove old default route via 10.0.2.2
+          command: ip route del default via 10.0.2.2 dev eth0
+          ignore_errors: true
+
+- name: Configure web server with Nginx and WordPress
+  hosts: web
+  become: yes
+  tasks:
+    # Обновление списка пакетов
+    - name: Update apt package cache
+      apt:
+        update_cache: yes
+
+    # Установка Nginx
+    - name: Install Nginx
+      apt:
+        name: nginx
+        state: present
+
+    - name: Start and enable Nginx
+      service:
+        name: nginx
+        state: started
+        enabled: yes
+
+    # Установка PHP и необходимых модулей
+    - name: Install PHP and required modules
+      apt:
+        name:
+          - php-fpm
+          - php-mysql
+          - php-curl
+          - php-mbstring
+          - php-xml
+          - php-zip
+        state: present
+
+    - name: Ensure PHP-FPM is started and enabled
+      service:
+        name: php8.1-fpm
+        state: started
+        enabled: yes
+
+    - name: Copy WordPress archive to server
+      copy:
+        src: files/web-server/wordpress-6.7.1.tar.gz
+        dest: /tmp/wordpress.tar.gz
+
+    - name: Extract WordPress
+      unarchive:
+        src: /tmp/wordpress.tar.gz
+        dest: /var/www/
+        remote_src: yes
+
+    - name: Set permissions for WordPress
+      file:
+        path: /var/www/wordpress
+        state: directory
+        owner: www-data
+        group: www-data
+        mode: '0755'
+        recurse: yes
+
+    - name: Copying ssl certificate for nginx
+      copy:
+        src: files/web-server/cheese.com.crt
+        dest: /etc/ssl/certs
+        mode: 0644
+
+    - name: Copying ssl certificate for nginx
+      copy:
+        src: files/web-server/cheese.com.key
+        dest: /etc/ssl/certs
+        mode: 0644
+
+    # Настройка Nginx для WordPress
+    - name: Configure Nginx for WordPress
+      template:
+        src: templates/wordpress_nginx.conf.j2
+        dest: /etc/nginx/sites-available/cheese.com
+      notify: Restart Nginx
+
+    - name: Enable WordPress site
+      file:
+        src: /etc/nginx/sites-available/cheese.com
+        dest: /etc/nginx/sites-enabled/cheese.com
+        state: link
+
+    - name: Remove default Nginx site
+      file:
+        path: /etc/nginx/sites-enabled/default
+        state: absent
+        
+    - name: Creating backup directory
+      shell: "sudo mkdir -p /root/backup/wp"
+      
+    - name: Copying backup script file in /usr/local/bin/ for backend
+      copy:
+        src: files/web-server/cron_wp_backup.sh
+        dest: /usr/local/bin/
+        mode: 0755
+
+    - name: Add backup task to cron for backend
+      tags: cron
+      shell: "crontab -l ; echo '*/30 * * * * root bash /usr/local/bin/cron_wp_backup.sh'| crontab -"
+
+  handlers:   
+    - name: Restart Nginx
+      service:
+        name: nginx
+        state: restarted
+        
+- name: Install MySQL on both servers
+  hosts: db_master, db_slave
+  tags: mysql_all
+  become: yes
+  tasks:
+    - name: Install MySQL server
+      apt:
+        name: mysql-server
+        state: present
+
+    - name: Start and enable MySQL service
+      service:
+        name: mysql
+        state: started
+        enabled: yes
+        
+    - name: Copy mysqlexpoter archive to server
+      copy:
+        src: files/monitoring/mysqld_exporter-0.16.0.linux-amd64.tar.gz
+        dest: /tmp/mysqld_exporter-0.16.0.linux-amd64.tar.gz
+        
+    - name: Add group and user for mysqld_exporter
+      shell: "groupadd --system prometheus; useradd -s /sbin/nologin --system -g prometheus prometheus"
+      ignore_errors: yes
+        
+    - name: Extracting mysqld_exporter
+      shell: "tar -xf /tmp/mysqld_exporter-0.16.0.linux-amd64.tar.gz -C /tmp/"
+      
+    - name: Moving mysqld_exporter 
+      shell: "mv /tmp/mysqld_exporter-0.16.0.linux-amd64/mysqld_exporter /usr/local/bin/; chmod +x /usr/local/bin/mysqld_exporter"
+      
+    - name: Copying mysqld_exporter.cnf for monitoring
+      copy:
+        src: files/.mysqld_exporter.cnf
+        dest: /etc/
+        mode: 0755
+        
+    - name: Copying mysqld_exporter.service for monitoring
+      copy:
+        src: files/mysql_exporter.service
+        dest: /etc/systemd/system/
+        mode: 0755
+
+    - name: start and enable mysqld_exporter service
+      service:
+        name: mysql_exporter
+        state: started
+        enabled: yes
+        daemon_reload: true
+      
+- name: Configure MySQL on MASTER
+  hosts: db_master
+  become: yes
+  tags: master_server_db
+  tasks:
+
+    - name: Configure mysqld.cnf
+      template:
+        src: templates/mysqld_master.j2
+        dest: /etc/mysql/mysql.conf.d/mysqld.cnf
+#      notify: Restart MySQL     
+
+    - name: Restart MySQL
+      service:
+        name: mysql
+        state: restarted 
+
+    - name: Configure root user and create database
+      tags: test1
+      shell: |
+       sudo mysql -u root -e "CREATE DATABASE db_wordpress; CREATE USER 'wordpress'@'%' IDENTIFIED BY '12345uu'; GRANT ALL PRIVILEGES ON db_wordpress.* TO 'wordpress'@'%'; CREATE USER 'mysqld_exporter'@'%' IDENTIFIED BY ''; GRANT ALL PRIVILEGES ON *.* TO 'mysqld_exporter'@'%'; FLUSH PRIVILEGES;"
+      args:
+        executable: /bin/bash
+        
+    - name: Configure replica user 
+      shell: |
+       sudo mysql -u root -e "CREATE USER 'replica_user'@'192.168.56.12' IDENTIFIED WITH mysql_native_password BY '12345uu'; GRANT REPLICATION SLAVE ON *.* TO 'replica_user'@'192.168.56.12'; FLUSH PRIVILEGES;"
+      args:
+        executable: /bin/bash
+
+    - name: clear master log file and position
+      tags: test1fact
+      set_fact:
+        master_log_file: null
+        master_log_position: null
+
+    - name: Get replication log file and position on master
+      tags: test1fact
+      shell: |
+        sudo mysql -u root -e "SHOW MASTER STATUS\G" | grep -E '(File|Position)'
+      register: master_status
+      args:
+        executable: /bin/bash
+
+    - name: Parse master log file and position
+      tags: test1fact
+      set_fact:
+        master_log_file: "{{ master_status.stdout_lines[0].split(': ')[1] }}"
+        master_log_position: "{{ master_status.stdout_lines[1].split(': ')[1] }}"
+
+#  handlers: 
+#    - name: Restart MySQL
+#      service:
+#        name: mysql
+#        state: restarted 
+
+- name: Configure MySQL on SLAVE
+  hosts: db_slave
+  become: yes
+  tags: slave_server_db
+  tasks:
+    - name: Create database
+      shell: |
+       sudo mysql -u root -e "CREATE DATABASE db_wordpress; CREATE USER 'mysqld_exporter'@'%' IDENTIFIED BY ''; GRANT ALL PRIVILEGES ON *.* TO 'mysqld_exporter'@'%'; FLUSH PRIVILEGES;"
+      args:
+        executable: /bin/bash
+
+    - name: Configure mysqld.cnf
+      template:
+        src: templates/mysqld_slave.j2
+        dest: /etc/mysql/mysql.conf.d/mysqld.cnf
+
+    - name: Restart MySQL
+      service:
+        name: mysql
+        state: restarted 
+      
+    - name: Configure replication on slave
+      shell: |
+        sudo mysql -u root -e "CHANGE REPLICATION SOURCE TO SOURCE_HOST='192.168.56.11', SOURCE_USER='replica_user', SOURCE_PASSWORD='12345uu',SOURCE_LOG_FILE='{{ hostvars[groups['db_master'][0]].master_log_file }}', SOURCE_LOG_POS={{ hostvars[groups['db_master'][0]].master_log_position }};"
+      args:
+        executable: /bin/bash
+
+    - name: Start replication on slave
+      shell: |
+        sudo mysql -u root -e "START SLAVE;"
+      args:
+        executable: /bin/bash
+
+    - name: Verify replication status on slave
+      shell: |
+        sudo mysql -u root -e "SHOW SLAVE STATUS\G"
+      register: slave_status
+      args:
+        executable: /bin/bash
+
+    - name: Debug replication status
+      debug:
+        var: slave_status.stdout
+
+    - name: Add backup directory for database
+      shell: "mkdir -p /root/backup/mysql"
+      
+    - name: Copying backup script file in /usr/local/bin/ for backend
+      copy:
+        src: files/cron_mysql_backup.sh
+        dest: /usr/local/bin/
+        mode: 0755
+
+    - name: Add backup task to cron for backend
+      tags: cron
+      shell: "crontab -l ; echo '*/30 * * * * root bash /usr/local/bin/cron_mysql_backup.sh'| crontab -"
+
+
+- name: Configure WordPress
+  hosts: web
+  become: yes
+  tasks:
+    - name: Create WordPress wp-config.php
+      template:
+        src: templates/wp-config.php.j2
+        dest: /var/www/wordpress/wp-config.php
+
+    - name: Set permissions for wp-config.php
+      file:
+        path: /var/www/wordpress/wp-config.php
+        owner: www-data
+        group: www-data
+        mode: '0644'
+
+- name: Configure Prometheus
+  hosts: monitoring
+  tags: monitor, prometheus
+  become: yes
+  tasks:
+    - name: Copy Prometheus archive to server
+      copy:
+        src: files/monitoring/prometheus-2.53.3.linux-amd64.tar.gz
+        dest: /tmp/prometheus-2.53.3.linux-amd64.tar.gz
+
+    - name: Ensure /var/prometheus directory exists
+      file:
+        path: /var/prometheus
+        state: directory
+
+    - name: Extract Prometheus
+      unarchive:
+        src: /tmp/prometheus-2.53.3.linux-amd64.tar.gz
+        dest: /var/prometheus
+        remote_src: yes
+
+    - name: Create group
+      group:
+        name: prometheus
+        system: yes
+
+    - name: Add user
+      user:
+        name: prometheus
+        shell: /sbin/nologin
+        system: yes
+        group: prometheus
+        
+    - name: Move prometheus to /usr/local/bin
+      shell: mv /var/prometheus/prometheus-2.53.3.linux-amd64/prometheus /usr/local/bin/
+
+    - name: Move promtool to /usr/local/bin
+      shell: mv /var/prometheus/prometheus-2.53.3.linux-amd64/promtool /usr/local/bin/
+
+    - name: Owner and group for prometheus
+      file:
+        path: /usr/local/bin/prometheus
+        owner: prometheus
+        group: prometheus
+
+    - name: Owner and group for promtool
+      file:
+        path: /usr/local/bin/promtool
+        owner: prometheus
+        group: prometheus
+        
+    - name: Ensure /etc/prometheus directory exists
+      file:
+        path: /etc/prometheus
+        state: directory
+       
+    - name: Ensure /var/prometheus directory exists
+      file:
+        path: /var/lib/prometheus
+        state: directory
+
+    - name: Move consoles 
+      shell: mv /var/prometheus/prometheus-2.53.3.linux-amd64/consoles/* /etc/prometheus/
+
+    - name: Move console_libraries
+      shell: mv /var/prometheus/prometheus-2.53.3.linux-amd64/console_libraries/* /etc/prometheus/
+      
+    - name: Configure prometheus.yml
+      template:
+        src: templates/prometheus.yml.j2
+        dest: /etc/prometheus/prometheus.yml
+
+    - name: Copying rules for ptometheus
+      copy:
+        src: files/monitoring/rules
+        dest: /etc/prometheus/
+        mode: 0755
+      
+    - name: Owner and group for /etc/prometheus
+      shell: chmod -R 775 /etc/prometheus/; chown -R prometheus:prometheus /var/lib/prometheus/; chown -R prometheus:prometheus /etc/prometheus/
+        
+        
+    - name: Configure prometheus.service
+      template:
+        src: templates/prometheus.service.j2
+        dest: /etc/systemd/system/prometheus.service
+
+    - name: Reload Systemd
+      command: systemctl daemon-reload
+      
+    - name: Enable Prometheus
+      systemd:
+        name: prometheus
+        enabled: yes
+
+    - name: Start Prometheus
+      systemd:
+        name: prometheus
+        state: started
+
+    - name: Copy rules
+      copy:
+        src: templates/alert.rules.yml.j2
+        dest: /etc/prometheus/alert.rules.yml
+
+- name: Install Grafana
+  hosts: monitoring
+  tags: monitor, grafana
+  become: yes 
+  tasks:
+
+    - name: Copy Grafana .deb to server
+      copy:
+        src: files/monitoring/grafana-enterprise_10.2.3_amd64.deb
+        dest: /tmp/grafana-enterprise_10.2.3_amd64.deb
+        
+    - name: Install dependencies Grafana
+      apt:
+        name:
+          - adduser
+          - libfontconfig1
+          - musl
+        state: present
+        update_cache: yes
+
+#    - name: Broken packages
+#      apt:
+#        upgrade: dist
+        #state: present
+
+    - name: Install Grafana from .deb
+      apt:
+        deb: /tmp/grafana-enterprise_10.2.3_amd64.deb
+        state: present
+        
+    - name: Add backup directory for grafana
+      shell: "mkdir -p /root/backup/grafana"
+
+    - name: Enable Grafana
+      systemd:
+        name: grafana-server
+        enabled: yes
+
+    - name: Start Grafana
+      systemd:
+        name: grafana-server
+        state: started
+        
+    - name: Copying backup script file in /usr/local/bin/ for backend
+      copy:
+        src: files/cron_grafana_backup.sh
+        dest: /usr/local/bin/
+        mode: 0755
+
+    - name: Add backup task to cron for backend
+      tags: cron
+      shell: "crontab -l ; echo '*/30 * * * * root bash /usr/local/bin/cron_grafana_backup.sh'| crontab -"
+
+- name: Install prometheus-node-exporter
+  hosts: all
+  tags: monitor, nodexporter
+  become: yes
+  tasks:
+    - name: Install prometheus-node-exporter
+      apt:
+        name: prometheus-node-exporter
+        state: present
+
+    - name: Start and enable prometheus-node-exporter
+      service:
+        name: prometheus-node-exporter
+        state: started
+        enabled: yes
+
+- name: Configure alertmanager
+  hosts: monitoring
+  tags: monitor, alertmanager
+  become: yes
+  tasks:
+    - name: Copy alertmanager archive to server
+      copy:
+        src: files/monitoring/alertmanager-0.27.0.linux-amd64.tar.gz
+        dest: /tmp/alertmanager-0.27.0.linux-amd64.tar.gz
+
+    - name: Ensure mkdir /etc/alertmanager directory exists
+      file:
+        path: /tmp/alertmanager
+        state: directory
+
+    - name: Extract alertmanager
+      unarchive:
+        src: /tmp/alertmanager-0.27.0.linux-amd64.tar.gz
+        dest: /tmp/alertmanager
+        remote_src: yes
+        
+    - name: Ensure mkdir /etc/alertmanager directory exists
+      file:
+        path: /etc/alertmanager
+        state: directory
+
+    - name: Ensure mkdir  /var/lib/prometheus/alertmanager directory exists
+      file:
+        path:  /var/lib/prometheus/alertmanager
+        state: directory
+        
+    - name: Move amtool to /usr/local/bin
+      command: mv /tmp/alertmanager/alertmanager-0.27.0.linux-amd64/amtool /usr/local/bin/
+
+    - name: Move alertmanager to /usr/local/bin
+      command: mv /tmp/alertmanager/alertmanager-0.27.0.linux-amd64/alertmanager /usr/local/bin/
+
+    - name: Configure alertmanager.yml
+      template:
+        src: templates/alertmanager.yml.j2
+        dest: /etc/alertmanager/alertmanager.yml
+
+    - name: Create group
+      group:
+        name: alertmanager
+        system: yes
+
+    - name: Add user
+      user:
+        name: alertmanager
+        shell: /sbin/nologin
+        system: yes
+        group: alertmanager
+        
+    - name: Owner and group for /etc/alertmanager
+      file:
+        path: /etc/alertmanager
+        owner: alertmanager
+        group: alertmanager
+
+    - name: Owner and group for /var/lib/prometheus/alertmanager
+      file:
+        path: /var/lib/prometheus/alertmanager
+        owner: alertmanager
+        group: alertmanager
+        
+    - name: Configure alertmanager.service
+      template:
+        src: templates/alertmanager.service.j2
+        dest: /etc/systemd/system/alertmanager.service
+
+    - name: Reload Systemd
+      command: systemctl daemon-reload
+      
+    - name: Enable alertmanager
+      systemd:
+        name: alertmanager
+        enabled: yes
+
+    - name: Start alertmanager
+      systemd:
+        name: alertmanager
+        state: started
+
+    - name: Restart prometheus
+      service:
+        name: prometheus
+        state: restarted 
+
+- name: Install Elasticsearch
+  hosts: log_collector
+  tags: log_collector, elasticsearch
+  become: yes 
+  tasks:
+
+    - name: Copy Elasticsearch .deb to server
+      copy:
+        src: files/log-collector/elasticsearch-8.17.0-amd64.deb
+        dest: /tmp/elasticsearch-8.17.0-amd64.deb
+
+    - name: Install Elasticsearch from .deb
+      apt:
+        deb: /tmp/elasticsearch-8.17.0-amd64.deb
+        state: present
+        
+    - name: Configure elasticsearch.yml
+      template:
+        src: templates/elasticsearch.yml.j2
+        dest: /etc/elasticsearch/elasticsearch.yml
+
+    - name: Set permissions for elasticsearch.yml
+      file:
+        path: /etc/elasticsearch/elasticsearch.yml
+        mode: '0660'
+        
+    - name: Reload Systemd
+      command: systemctl daemon-reload
+      
+    - name: Enable Elasticsearch
+      systemd:
+        name: elasticsearch.service
+        enabled: yes
+
+    - name: Start Elasticsearch
+      systemd:
+        name: elasticsearch.service
+        state: started
+
+- name: Install Kibana
+  hosts: log_collector
+  tags: log_collector, kibana
+  become: yes 
+  tasks:
+
+    - name: Copy Kibana .deb to server
+      copy:
+        src: files/log-collector/kibana-8.17.0-amd64.deb
+        dest: /tmp/kibana-8.17.0-amd64.deb
+
+    - name: Install Kibana from .deb
+      apt:
+        deb: /tmp/kibana-8.17.0-amd64.deb
+        state: present
+        
+    - name: Reload Systemd
+      command: systemctl daemon-reload
+      
+    - name: Enable Kibana
+      systemd:
+        name: kibana.service
+        enabled: yes
+
+    - name: Start Kibana
+      systemd:
+        name: kibana.service
+        state: started
+
+- name: Configuration for Elasticsearch - Kibana
+  hosts: log_collector
+  tags: log_collector, elkib
+  become: true
+  tasks:
+  
+    - name: clear kibana fact password
+      tags: test1fact
+      set_fact:
+        kibana_password: null
+        reset_password_output_kibana: null
+    
+    - name: Reset password for user kibana_system in elastic
+      expect:
+        command: "/usr/share/elasticsearch/bin/elasticsearch-reset-password -u kibana_system --force"
+        responses:
+          "Please confirm that you would like to continue \\[y/N\\]": "y"
+      register: reset_password_output_kibana
+
+    - name: Extracting a new password value
+      set_fact:
+        kibana_password: "{{ reset_password_output_kibana.stdout.split('New value:')[1].strip() }}"
+
+    - name: Make sure the new password is retrieved
+      debug:
+        msg: "New password)): {{ kibana_password }}"
+
+#    - name: Update Kibana.yml
+#      lineinfile:
+#        path: /etc/kibana/kibana.yml
+#        regexp: '^elasticsearch\.password:.*'
+#        line: "elasticsearch.password: \"{{ kibana_password }}\""
+#        create: yes
+
+    - name: Копирование каталога /etc/elasticsearch/certs в /etc/kibana
+      tags: copycerts
+      shell: |
+       sudo cp -R /etc/elasticsearch/certs /etc/kibana; sudo chown -R root:kibana /etc/kibana/certs
+      args:
+        executable: /bin/bash
+
+    - name: Установка владельца и группы для /etc/kibana/certs
+      file:
+       path: /etc/kibana/certs
+       recurse: true
+       owner: root
+       group: kibana
+       
+    - name: Configure kibana.yml
+      template:
+        src: templates/kibana.yml.j2
+        dest: /etc/kibana/kibana.yml
+
+    - name: Set permissions for kibana.yml
+      file:
+        path: /etc/kibana/kibana.yml
+        mode: '0660'
+
+    - name: Перезапуск службы Kibana
+      service:
+        name: kibana
+        state: restarted
+        
+- name: Install logstash
+  hosts: log_collector
+  tags: log_collector, logstash
+  become: yes 
+  tasks:
+
+    - name: Copy logstash .deb to server
+      copy:
+        src: files/log-collector/logstash-8.17.0-amd64.deb
+        dest: /tmp/logstash-8.17.0-amd64.deb
+
+    - name: Install logstash from .deb
+      apt:
+        deb: /tmp/logstash-8.17.0-amd64.deb
+        state: present
+
+    - name: Копирование каталога /etc/elasticsearch/certs в /etc/logstash
+      shell: |
+       sudo cp -R /etc/elasticsearch/certs /etc/logstash; sudo chown -R root:logstash /etc/logstash/certs
+      args:
+        executable: /bin/bash
+        
+    - name: clear elastic fact password
+      set_fact:
+        elastic_password: null
+        reset_password_output_elastic: null
+    
+    - name: Reset password for user elastic in elastic
+      expect:
+        command: "/usr/share/elasticsearch/bin/elasticsearch-reset-password -u elastic --force"
+        responses:
+          "Please confirm that you would like to continue \\[y/N\\]": "y"
+      register: reset_password_output_elastic
+
+    - name: Extracting a new password value
+      set_fact:
+        elastic_password: "{{ reset_password_output_elastic.stdout.split('New value:')[1].strip() }}"
+
+    - name: Make sure the new password is retrieved
+      debug:
+        msg: "New password)): {{ elastic_password }}"
+
+    - name: Configure filter.conf
+      template:
+        src: templates/filter.conf.j2
+        dest: /etc/logstash/conf.d/filter.conf
+
+    - name: Configure output.conf
+      template:
+        src: templates/output.conf.j2
+        dest: /etc/logstash/conf.d/output.conf
+
+    - name: Configure input.conf
+      template:
+        src: templates/input.conf.j2
+        dest: /etc/logstash/conf.d/input.conf
+
+#    - name: Update output.conf
+#      lineinfile:
+#        path: /etc/logstash/conf.d/output.conf
+#        regexp: '^password.*'
+#        line: 	    password => "{{ elastic_password }}"
+#        create: yes
+        
+#    - name: Set permissions for logstash
+#      tags: chmod
+#      file:
+#        path: /etc/logstash/conf.d/
+#        state: directory
+#        mode: '0660'
+#        recurse: yes
+        
+    - name: Reload Systemd
+      command: systemctl daemon-reload
+      
+    - name: Enable logstash
+      systemd:
+        name: logstash.service
+        enabled: yes
+
+    - name: Start logstash
+      systemd:
+        name: logstash.service
+        state: started
+        
+- name: Install filebeat
+  hosts: all
+  tags: filebeat
+  become: yes 
+  tasks:
+
+    - name: Copy filebeat .deb to server
+      copy:
+        src: files/log-collector/filebeat-8.17.0-amd64.deb
+        dest: /tmp/filebeat-8.17.0-amd64.deb
+
+    - name: Install filebeat from .deb
+      apt:
+        deb: /tmp/filebeat-8.17.0-amd64.deb
+        state: present
+
+    - name: Configure filebeat.yml
+      template:
+        src: templates/filebeat.yml.j2
+        dest: /etc/filebeat/filebeat.yml
+        
+    - name: Configure filebeat.yml
+      template:
+        src: templates/filebeat_nginx.yml.j2
+        dest: /etc/filebeat/modules.d/nginx.yml
+      when: ansible_hostname == "web-server"
+   
+    - name: Set permissions for filebeat.yml
+      file:
+        path: /etc/filebeat/filebeat.yml
+        mode: '0640'
+        
+    - name: Set permissions for filebeat module nginx.yml
+      file:
+        path: /etc/filebeat/modules.d/nginx.yml
+        mode: '0644'
+      when: ansible_hostname == "web-server"
+        
+    - name: Enable filebeat
+      systemd:
+        name: filebeat.service
+        enabled: yes
+
+    - name: Start filebeat
+      systemd:
+        name: filebeat.service
+        state: started
+        
+- name: Config for backup
+  hosts: backup
+  tags: backup
+  become: yes 
+  tasks:
+    - name: Add backup directory for backup
+      shell: "mkdir -p /root/backup/mysql; mkdir -p /root/backup/wp; mkdir -p /root/backup/grafana"
+
+      
+

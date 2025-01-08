@@ -1,0 +1,59 @@
+filebeat.registry.flush: 10s
+setup.template.settings:
+  index.number_of_shards: 5
+
+# ============================== Filebeat modules ==============================
+
+filebeat.config.modules:
+  # Glob pattern for configuration loading
+  path: ${path.config}/modules.d/*.yml
+
+  # Set to true to enable config reloading
+  reload.enabled: true
+
+  # Period on which files under path should be checked for changes
+  reload.period: 30s
+  
+# ============================== Filebeat inputs ===============================
+
+filebeat.inputs:
+- type: journald
+  id: everything
+
+# ================================== General ===================================
+
+fields:
+  env: prod
+  owner: otus
+  responsible: platform_ops
+  project: otus
+
+# ------------------------------ Logstash Output -------------------------------
+output.logstash:
+  hosts: ["192.168.56.14:5044"]
+  loadbalance: true
+  index: otus
+
+  max_retries: 10
+  bulk_max_size: 100
+  backoff.init: 15s
+  backoff.max: 60s
+  timeout: 90
+# ================================= Processors =================================
+processors:
+  - add_host_metadata: ~
+  - drop_event:
+      when:
+        equals:
+          syslog.identifier: "sudo"
+# ================================== Logging ===================================
+
+# Sets log level. The default log level is info.
+# Available log levels are: error, warning, info, debug
+logging.level: info
+
+# At debug level, you can selectively enable logging only for some components.
+# To enable all selectors use ["*"]. Examples of other selectors are "beat",
+# "publisher", "service".
+logging.selectors: ["*"]
+

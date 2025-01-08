@@ -1,0 +1,49 @@
+<?php
+// ** Database settings - You can get this info from your web host ** //
+/** The name of the database for WordPress */
+define( 'DB_NAME', 'db_wordpress' );
+
+/** Database username */
+define( 'DB_USER', 'wordpress' );
+
+/** Database password */
+define( 'DB_PASSWORD', '12345uu' );
+
+/** Database hostname */
+define( 'DB_HOST', '192.168.56.11' );
+
+/** Database charset to use in creating database tables. */
+define( 'DB_CHARSET', 'utf8mb4' );
+
+/** The database collate type. Don't change this if in doubt. */
+define( 'DB_COLLATE', '' );
+
+define( 'AUTH_KEY',         '8(5V _P t(u7D,gJ]lT{7ec;}Tv,a)drPR@R Y!,&^%lG8I+KVAghf<.Ao9O,C/a' );
+define( 'SECURE_AUTH_KEY',  'xuo@:Yq[&8d ,~9(yKfun] ?w[q6vFmk$kD]Zt[kkR7KY&r^`5&%UHWy[KyEq$I]' );
+define( 'LOGGED_IN_KEY',    '|NA>+kL/~`0NaM?@Xj9RXb*CQ$WsvwKiicJi6.$S4RxGsl*W,L$V5TNvqHS0;~>:' );
+define( 'NONCE_KEY',        'BKrICKtGvaGiD6%e`^Stn/7_`RtCA-&Ch|mP^yFR,BtC(bZ[<;T6%j$2Dc.I,0j+' );
+define( 'AUTH_SALT',        '5DL8U%%uEk_htg54k>azT+9t<K4k n[h57l%=R`EdMtTb},pvPglizBJJ*-L~D&l' );
+define( 'SECURE_AUTH_SALT', '-}w;4:VIy!o[541h0YL$=iq1[g^&[n_5$Z|jHXPtOza)6WKYy}^AgO*`C(&U?R[p' );
+define( 'LOGGED_IN_SALT',   ']+t ?X65+G+GTlqtq3aQq[<[{-.O2}Ks5HxD)U-Uy4in?%0d7P0XW^CLYH((7JIN' );
+define( 'NONCE_SALT',       '{m,C;Zocb!XSmOG^ htG}mXzgX*#V.@va9225iMU>iu,d(.T@I&VIB[8{v1$a`{]' );
+
+
+$table_prefix = 'wp_';
+
+
+define( 'WP_DEBUG', false );
+
+/* Add any custom values between this line and the "stop editing" line. */
+
+
+
+/* That's all, stop editing! Happy publishing. */
+
+/** Absolute path to the WordPress directory. */
+if ( ! defined( 'ABSPATH' ) ) {
+	define( 'ABSPATH', __DIR__ . '/' );
+}
+
+/** Sets up WordPress vars and included files. */
+require_once ABSPATH . 'wp-settings.php';
+

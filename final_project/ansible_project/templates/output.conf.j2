@@ -1,0 +1,11 @@
+output {
+        elasticsearch {
+            hosts    => "https://192.168.56.14:9200"
+            user => "elastic"
+            password => "{{ elastic_password }}"
+            ssl_certificate_authorities => "/etc/logstash/certs/http_ca.crt"
+            manage_template => false
+            index => "%{[@metadata][beat]}-%{+YYYY.MM.dd}"
+            document_type => "%{[@metadata][type]}"
+        }
+}

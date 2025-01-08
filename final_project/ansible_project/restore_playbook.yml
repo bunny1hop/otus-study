@@ -1,0 +1,105 @@
+- name: Resorte wp files
+  hosts: web
+  tags: restore_wp
+  become: yes
+  tasks:
+    - name: Copying restore script file in /usr/local/bin/ for web
+      copy:
+        src: files/web-server/cron_wp_restore.sh
+        dest: /usr/local/bin/
+        mode: 0755
+
+    - name: Restoring WP for backend
+      shell: "bash /usr/local/bin/cron_wp_restore.sh"
+      
+- name: Resorte grafana files
+  hosts: monitoring
+  tags: restore_gf
+  become: yes
+  tasks:
+    - name: Copying backup script file in /etc/grafana/ for grafana
+      copy:
+        src: files/monitoring/grafana.ini
+        dest: /etc/grafana/
+        mode: 0755
+
+    - name: Rights for grafana config file
+      shell: "chown -R root:grafana /etc/grafana/grafana.ini"
+
+    - name: Copying restore script file in /usr/local/bin/ for grafana
+      copy:
+        src: files/cron_grafana_restore.sh
+        dest: /usr/local/bin/
+        mode: 0755
+
+    - name: Restoring SQL for grafana
+      shell: "bash /usr/local/bin/cron_grafana_restore.sh"
+      
+- name: Resorte mysql db
+  hosts: db_master, db_slave
+  tags: restore_db
+  become: yes
+  tasks:  
+    - name: Copying restore script file in /usr/local/bin/ for database
+      copy:
+        src: files/cron_mysql_restore.sh
+        dest: /usr/local/bin/
+        mode: 0755
+      when: ansible_hostname == "db-master"
+
+    - name: Restoring MySQL for database
+      shell: "bash /usr/local/bin/cron_mysql_restore.sh"
+      when: ansible_hostname == "db-master"
+    
+    - name: clear master log file and position
+      set_fact:
+        master_log_file: null
+        master_log_position: null
+
+    - name: Get replication log file and position on master
+      shell: |
+        sudo mysql -u root -e "SHOW MASTER STATUS\G" | grep -E '(File|Position)'
+      register: master_status
+      args:
+        executable: /bin/bash
+      when: ansible_hostname == "db-master"
+      
+    - name: Parse master log file and position
+      set_fact:
+        master_log_file: "{{ master_status.stdout_lines[0].split(': ')[1] }}"
+        master_log_position: "{{ master_status.stdout_lines[1].split(': ')[1] }}"
+      when: ansible_hostname == "db-master"
+
+    - name: Stop replication on slave
+      shell: |
+        sudo mysql -u root -e "STOP SLAVE;"
+      args:
+        executable: /bin/bash
+      when: ansible_hostname == "db-slave"
+      
+    - name: Configure replication on slave
+      shell: |
+        sudo mysql -u root -e "CHANGE REPLICATION SOURCE TO SOURCE_HOST='192.168.56.11', SOURCE_USER='replica_user', SOURCE_PASSWORD='12345uu',SOURCE_LOG_FILE='{{ hostvars[groups['db_master'][0]].master_log_file }}', SOURCE_LOG_POS={{ hostvars[groups['db_master'][0]].master_log_position }};"
+      args:
+        executable: /bin/bash
+      when: ansible_hostname == "db-slave"
+        
+    - name: Stop replication on slave
+      shell: |
+        sudo mysql -u root -e "START SLAVE;"
+      args:
+        executable: /bin/bash
+      when: ansible_hostname == "db-slave"
+
+    - name: Verify replication status on slave
+      shell: |
+        sudo mysql -u root -e "SHOW SLAVE STATUS\G"
+      register: slave_status
+      args:
+        executable: /bin/bash
+      when: ansible_hostname == "db-slave"
+
+    - name: Debug replication status
+      debug:
+        var: slave_status.stdout
+      when: ansible_hostname == "db-slave"
